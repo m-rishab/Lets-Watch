@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Player with Live MKV Streaming</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .conversion-info {
+      background: #2d3748;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 15px;
+      font-size: 0.9rem;
+      border-left: 4px solid #4299e1;
+    }
+    
+    .convert-btn {
+      background-color: #4299e1;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+    
+    .convert-btn:hover {
+      background-color: #3182ce;
+    }
+    
+    .progress {
+      margin-top: 10px;
+      height: 6px;
+      width: 100%;
+      background: #4a5568;
+      border-radius: 3px;
+      overflow: hidden;
+      display: none;
+    }
+    
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #4299e1;
+      transition: width 0.3s ease;
+    }
+    
+    .error-message {
+      color: #fc8181;
+      margin-top: 10px;
+    }
+    
+    .success-message {
+      color: #68d391;
+      margin-top: 10px;
+    }
+    
+    /* Video player enhancements */
+    #videoContainer {
+      position: relative;
+    }
+    
+    .buffer-info {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      color: #e2e8f0;
+      display: none;
+      z-index: 10;
+    }
+    
+    .streaming-indicator {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 10px;
+      color: #4299e1;
+      font-size: 0.85rem;
+    }
+    
+    .streaming-indicator .dot {
+      height: 8px;
+      width: 8px;
+      border-radius: 50%;
+      background-color: #4299e1;
+      margin-right: 5px;
+      animation: blink 1.5s infinite;
+    }
+    
+    @keyframes blink {
+      0% { opacity: 0.4; }
+      50% { opacity: 1; }
+      100% { opacity: 0.4; }
+    }
+    
+    /* Debug panel */
+    .debug-panel {
+      background: #1a202c;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+      border-left: 4px solid #ed8936;
+      display: none;
+    }
+    
+    .debug-panel.visible {
+      display: block;
+    }
+    
+    .debug-toggle {
+      background-color: #718096;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      margin-top: 10px;
+    }
+    
+    .debug-messages {
+      margin-top: 10px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.85rem;
+      padding: 10px;
+      background: #2d3748;
+      border-radius: 4px;
+    }
+    
+    .debug-timestamp {
+      color: #a0aec0;
+      margin-right: 10px;
+    }
+    
+    .debug-error {
+      color: #fc8181;
+    }
+    
+    .debug-success {
+      color: #68d391;
+    }
+    
+    /* Status indicator */
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+      padding: 8px;
+      background: #2d3748;
+      border-radius: 4px;
+    }
+    
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    
+    .status-dot.success {
+      background-color: #68d391;
+    }
+    
+    .status-dot.error {
+      background-color: #fc8181;
+    }
+    
+    .status-dot.warning {
+      background-color: #f6ad55;
+    }
+    
+    /* Stream health indicator */
+    .stream-health {
+      background: #2d3748;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 12px;
+      display: none;
+    }
+    
+    .stream-health.visible {
+      display: block;
+    }
+    
+    .stream-status {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .stream-quality {
+      height: 4px;
+      background: #4a5568;
+      border-radius: 2px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    
+    .stream-quality-indicator {
+      height: 100%;
+      width: 0%;
+      background: #68d391;
+      transition: width 0.5s ease;
+    }
+    
+    .retry-btn {
+      background-color: #ed8936;
+      color: white;
+      border: none;
+      padding: 8px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 10px;
+      display: none;
+    }
+    
+    .retry-btn:hover {
+      background-color: #dd6b20;
+    }
+  </style>
+</head>
+<body class="flex">
+  <!-- Playlist Sidebar -->
+  <aside>
+    <h1>Video Playlist</h1>
+    
+    <!-- FFmpeg Status Indicator -->
+    <div class="status-indicator">
+      <div class="status-dot {{ 'success' if has_ffmpeg else 'error' }}"></div>
+      <span>FFmpeg: {{ 'Installed' if has_ffmpeg else 'Not Installed' }}</span>
+    </div>
+    
+    <ul id="playlist">
+      {% for video in videos %}
+        <li class="video-item" 
+            data-src="{{ video.src }}" 
+            data-type="{{ video.type }}"
+            {% if video.needs_conversion is defined %}
+            data-needs-conversion="true"
+            {% endif %}
+            {% if video.streamable is defined %}
+            data-streamable="true"
+            {% endif %}
+        >
+          {{ video.title }}
+          {% if video.streamable is defined %}
+          <div class="streaming-indicator" style="display: none;"><div class="dot"></div>Streaming</div>
+          {% endif %}
+          {% if video.needs_conversion is defined %}
+          <button class="convert-btn">Convert</button>
+          <div class="progress"><div class="progress-bar"></div></div>
+          <div class="conversion-status"></div>
+          {% endif %}
+        </li>
+      {% endfor %}
+      
+      {% if not videos %}
+        <li class="no-videos">No videos found. Please add video files to the videos folder.</li>
+      {% endif %}
+    </ul>
+    
+    <!-- Stream Health Monitor -->
+    <div id="streamHealth" class="stream-health">
+      <h3>Stream Health</h3>
+      <div class="stream-status">
+        <div class="status-dot warning"></div>
+        <span id="streamStatusText">Initializing stream...</span>
+      </div>
+      <div class="stream-quality">
+        <div id="streamQualityIndicator" class="stream-quality-indicator"></div>
+      </div>
+      <button id="retryStream" class="retry-btn">Retry Stream</button>
+    </div>
+    
+    <div class="conversion-info">
+      <h3>Video Format Support</h3>
+      <p>Your video player now supports real-time streaming of MKV files using on-the-fly transcoding.</p>
+      
+      {% if has_ffmpeg %}
+        <p>✅ FFmpeg detected: MKV files can be streamed in real-time or converted to MP4.</p>
+        <p>⚠️ Note: Streaming large MKV files may be CPU intensive.</p>
+      {% else %}
+        <p>❌ FFmpeg not found: Cannot stream or convert MKV files. Please install FFmpeg.</p>
+        <p>To install FFmpeg:</p>
+        <ul>
+          <li>Ubuntu/Debian: <code>sudo apt install ffmpeg</code></li>
+          <li>macOS: <code>brew install ffmpeg</code></li>
+          <li>Windows: <a href="https://ffmpeg.org/download.html" target="_blank">Download here</a></li>
+        </ul>
+      {% endif %}
+    </div>
+    
+    <button id="toggleDebug" class="debug-toggle">Show Debug Panel</button>
+    
+    <div id="debugPanel" class="debug-panel">
+      <h3>Debug Information</h3>
+      <div id="debugMessages" class="debug-messages"></div>
+    </div>
+  </aside>
+
+  <!-- Video Player Area -->
+  <main>
+    <div class="player-container">
+      <div id="videoContainer">
+        <video id="videoPlayer" controls></video>
+        <div id="player-message" class="player-message">Select a video from the playlist</div>
+        <div id="buffer-info" class="buffer-info">Buffering...</div>
+      </div>
+      <div class="controls">
+        <button id="rewind" class="control-btn">
+          <span class="icon">⏪</span> Rewind 10s
+        </button>
+        <button id="playPause" class="control-btn">
+          <span class="icon">⏯️</span> Play/Pause
+        </button>
+        <button id="forward" class="control-btn">
+          <span class="icon">⏩</span> Forward 10s
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const playlistItems = document.querySelectorAll(".video-item");
+    const player = document.getElementById("videoPlayer");
+    const playerMessage = document.getElementById("player-message");
+    const bufferInfo = document.getElementById("buffer-info");
+    const playPauseBtn = document.getElementById("playPause");
+    const debugPanel = document.getElementById("debugPanel");
+    const debugMessages = document.getElementById("debugMessages");
+    const toggleDebugBtn = document.getElementById("toggleDebug");
+    const streamHealth = document.getElementById("streamHealth");
+    const streamStatusText = document.getElementById("streamStatusText");
+    const streamQualityIndicator = document.getElementById("streamQualityIndicator");
+    const retryStreamBtn = document.getElementById("retryStream");
+    
+    let currentStreamingItem = null;
+    let isStreaming = false;
+    let streamRetries = 0;
+    const MAX_STREAM_RETRIES = 3;
+    let currentVideoSrc = '';
+    
+    // Debug functionality
+    toggleDebugBtn.addEventListener("click", function() {
+      debugPanel.classList.toggle("visible");
+      toggleDebugBtn.textContent = debugPanel.classList.contains("visible") ? 
+        "Hide Debug Panel" : "Show Debug Panel";
+    });
+    
+    function logDebug(message, type = "info") {
+      const timestamp = new Date().toLocaleTimeString();
+      const logItem = document.createElement("div");
+      logItem.innerHTML = `<span class="debug-timestamp">[${timestamp}]</span> <span class="debug-${type}">${message}</span>`;
+      debugMessages.appendChild(logItem);
+      debugMessages.scrollTop = debugMessages.scrollHeight; // Auto-scroll to bottom
+    }
+    
+    // Update Stream Health UI
+    function updateStreamHealth(status, quality = 0) {
+      if (!isStreaming) {
+        streamHealth.classList.remove("visible");
+        return;
+      }
+      
+      streamHealth.classList.add("visible");
+      
+      // Update status dot
+      const statusDot = streamHealth.querySelector(".status-dot");
+      statusDot.className = "status-dot";
+      
+      if (status === "good") {
+        statusDot.classList.add("success");
+        streamStatusText.textContent = "Stream running smoothly";
+        retryStreamBtn.style.display = "none";
+      } else if (status === "buffering") {
+        statusDot.classList.add("warning");
+        streamStatusText.textContent = "Stream buffering...";
+        retryStreamBtn.style.display = "none";
+      } else if (status === "error") {
+        statusDot.classList.add("error");
+        streamStatusText.textContent = "Stream error";
+        retryStreamBtn.style.display = "block";
+      } else if (status === "starting") {
+        statusDot.classList.add("warning");
+        streamStatusText.textContent = "Starting stream...";
+        retryStreamBtn.style.display = "none";
+      }
+      
+      // Update quality indicator
+      streamQualityIndicator.style.width = `${quality}%`;
+    }
+    
+    // Function to handle buffering display
+    player.addEventListener('waiting', function() {
+      if (isStreaming) {
+        bufferInfo.style.display = 'block';
+        logDebug("Video buffering...", "warning");
+        updateStreamHealth("buffering", 50);
+      }
+    });
+    
+    player.addEventListener('playing', function() {
+      bufferInfo.style.display = 'none';
+      logDebug("Video playing", "success");
+      
+      if (isStreaming) {
+        updateStreamHealth("good", 100);
+      }
+    });
+    
+    // Function to handle video errors
+    player.addEventListener('error', function(e) {
+      console.error('Video error:', player.error);
+      
+      let errorMsg = 'Error loading video. ';
+      let errorCode = player.error ? player.error.code : 0;
+      
+      if (player.src.toLowerCase().includes('/stream/')) {
+        errorMsg += 'Streaming error. The server might be overloaded or FFmpeg is not working properly.';
+        logDebug(`Streaming error (code: ${errorCode}). Check that FFmpeg is properly installed and the file is not corrupted.`, "error");
+        
+        if (isStreaming) {
+          updateStreamHealth("error", 0);
+        }
+        
+        // Check if we should auto-retry
+        if (streamRetries < MAX_STREAM_RETRIES) {
+          streamRetries++;
+          logDebug(`Auto-retrying stream (attempt ${streamRetries}/${MAX_STREAM_RETRIES})...`, "warning");
+          
+          // Wait a moment before retrying
+          setTimeout(() => {
+            retryStream();
+          }, 2000);
+        }
+      } else if (player.src.toLowerCase().endsWith('.mkv')) {
+        errorMsg += 'MKV format is not supported by most browsers. Please use the streaming feature instead.';
+        logDebug("MKV direct playback not supported. Use streaming instead.", "error");
+      } else {
+        errorMsg += 'Please check that the video file exists and is in a supported format.';
+        logDebug(`Video error code: ${errorCode}`, "error");
+      }
+      
+      playerMessage.textContent = errorMsg;
+      playerMessage.style.display = 'flex';
+    });
+    
+    player.addEventListener('loadstart', function() {
+      playerMessage.style.display = 'none';
+      logDebug(`Loading video: ${player.src}`, "info");
+      
+      if (isStreaming) {
+        updateStreamHealth("starting", 30);
+      }
+    });
+    
+    // Retry stream functionality
+    retryStreamBtn.addEventListener("click", retryStream);
+    
+    function retryStream() {
+      if (!currentStreamingItem || !isStreaming) return;
+      
+      logDebug("Manually retrying stream...", "info");
+      loadVideo(currentStreamingItem, true);
+    }
+
+    function loadVideo(element, isRetry = false) {
+      // Remove active class from all items
+      playlistItems.forEach(item => item.classList.remove("active"));
+      
+      // Add active class to clicked item
+      element.classList.add("active");
+      
+      // Check if video needs conversion
+      if (element.dataset.needsConversion) {
+        playerMessage.textContent = "This MKV file needs to be converted before playing. Click the 'Convert' button.";
+        playerMessage.style.display = 'flex';
+        player.src = '';
+        return;
+      }
+      
+      // Reset streaming state if we were streaming before
+      if (isStreaming && currentStreamingItem) {
+        const oldIndicator = currentStreamingItem.querySelector('.streaming-indicator');
+        if (oldIndicator) oldIndicator.style.display = 'none';
+      }
+      
+      // Set video source and play
+      const videoSrc = element.dataset.src;
+      currentVideoSrc = videoSrc;
+      
+      logDebug(`Loading video: ${videoSrc}`, "info");
+      
+      // Check if this is a streaming video
+      isStreaming = element.dataset.streamable === 'true';
+      
+      if (isStreaming) {
+        // Show streaming indicator
+        const indicator = element.querySelector('.streaming-indicator');
+        if (indicator) indicator.style.display = 'inline-flex';
+        currentStreamingItem = element;
+        logDebug("Starting streaming mode", "info");
+        updateStreamHealth("starting", 30);
+        
+        // If not a retry, reset the retry counter
+        if (!isRetry) {
+          streamRetries = 0;
+        }
+        
+        // If user is seeking in a streaming video, we need to update the URL
+        player.addEventListener('seeked', handleStreamSeek);
+      } else {
+        // Remove seek handler if not streaming
+        player.removeEventListener('seeked', handleStreamSeek);
+        streamHealth.classList.remove("visible");
+      }
+      
+      player.src = videoSrc;
+      player.load(); // Important to call load after changing source
+      
+      // Try to play and handle any errors
+      player.play().catch(error => {
+        console.error('Play error:', error);
+        logDebug(`Play error: ${error.message}`, "error");
+      });
+    }
+    
+    // Handle seeking in streaming videos
+    // Handle seeking in streaming videos
+    function handleStreamSeek(e) {
+      if (!isStreaming || !player.src.includes('/stream/')) return;
+      
+      const currentTime = player.currentTime;
+      logDebug(`Seeking to ${currentTime.toFixed(2)}s in streaming mode`, "info");
+      
+      // For small seeks (like our 10-second seek buttons), don't reload the stream
+      // This will make the player use native HTML5 seeking which works better for small jumps
+      
+      // Only reload stream for large seeks (more than 60 seconds)
+      // or if we're very close to the beginning and seeking backward
+      const seekDistance = Math.abs(currentTime - player.lastSeekTime || 0);
+      const isLargeSeek = seekDistance > 60;
+      const isNearBeginning = currentTime < 5 && e.type === 'seeked';
+      
+      if (isLargeSeek || isNearBeginning) {
+        // Save current playback state
+        const wasPlaying = !player.paused;
+        
+        // Get the base URL without query parameters
+        const baseUrl = player.src.split('?')[0];
+        
+        // Update the video source URL with the new start time
+        player.src = `${baseUrl}?start=${currentTime}`;
+        player.load();
+        
+        // Restore playback if it was playing
+        if (wasPlaying) {
+          player.play().catch(e => {
+            logDebug(`Error resuming after seek: ${e.message}`, "error");
+          });
+        }
+      }
+      
+      // Store the last seek time for comparison
+      player.lastSeekTime = currentTime;
+    }
+
+    // Add click events to playlist items
+    playlistItems.forEach(item => {
+      // Handle clicking on the list item itself (not the convert button)
+      item.addEventListener("click", function(e) {
+        // Don't process if the click was on the convert button
+        if (e.target.className === 'convert-btn') return;
+        loadVideo(this);
+      });
+      
+      // Handle convert button clicks if present
+      const convertBtn = item.querySelector('.convert-btn');
+      if (convertBtn) {
+        convertBtn.addEventListener('click', function(e) {
+          e.stopPropagation(); // Prevent triggering the parent li click
+          convertVideo(item);
+        });
+      }
+    });
+    
+    // Function to convert videos
+    function convertVideo(item) {
+      const videoSrc = item.dataset.src;
+      const filename = videoSrc.split('/').pop();
+      const convertBtn = item.querySelector('.convert-btn');
+      const progressBar = item.querySelector('.progress-bar');
+      const progress = item.querySelector('.progress');
+      const statusDiv = item.querySelector('.conversion-status');
+      
+      // Update UI to show conversion is starting
+      convertBtn.disabled = true;
+      progress.style.display = 'block';
+      progressBar.style.width = '10%';
+      statusDiv.textContent = 'Starting conversion...';
+      statusDiv.className = 'conversion-status';
+      logDebug(`Starting conversion of ${filename}`, "info");
+      
+      // Call the conversion API
+      fetch(`/convert/${filename}`)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          if (data.success) {
+            // Update progress and status
+            progressBar.style.width = '100%';
+            statusDiv.textContent = 'Conversion complete!';
+            statusDiv.className = 'conversion-status success-message';
+            logDebug(`Conversion successful: ${filename}`, "success");
+            
+            // Update the item to point to the new converted video
+            item.dataset.src = data.url;
+            item.dataset.type = 'mp4';
+            delete item.dataset.needsConversion;
+            
+            // Remove the convert button and progress bar
+            setTimeout(() => {
+              convertBtn.remove();
+              progress.remove();
+              
+              // Update the text to remove "(needs conversion)"
+              const newTitle = item.textContent.replace('(MKV - needs conversion)', '(MP4 - converted)');
+              item.childNodes[0].nodeValue = newTitle;
+              
+              // Load the converted video
+              loadVideo(item);
+            }, 1000);
+          } else {
+            // Show error
+            progressBar.style.width = '0%';
+            statusDiv.textContent = `Error: ${data.error || 'Conversion failed'}`;
+            statusDiv.className = 'conversion-status error-message';
+            convertBtn.disabled = false;
+            logDebug(`Conversion error: ${data.error || 'Unknown error'}`, "error");
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          statusDiv.textContent = 'Error: Could not contact server';
+          statusDiv.className = 'conversion-status error-message';
+          progressBar.style.width = '0%';
+          convertBtn.disabled = false;
+          logDebug(`Server error during conversion: ${error.message}`, "error");
+        });
+    }
+
+    // Load first video if available
+    if (playlistItems.length) {
+      loadVideo(playlistItems[0]);
+    } else {
+      playerMessage.textContent = "No videos available. Please add video files to your videos folder.";
+      playerMessage.style.display = 'flex';
+    }
+
+    // Playback control
+    playPauseBtn.addEventListener("click", () => {
+      if (!player.src) return;
+      
+      if (player.paused) {
+        player.play().catch(error => {
+          console.error('Play error:', error);
+        });
+      } else {
+        player.pause();
+      }
+    });
+
+    document.getElementById("forward").addEventListener("click", () => {
+      if (!player.src) return;
+      
+      if (isStreaming) {
+        // For streaming, we need to seek using our custom handler
+        player.currentTime += 10;
+      } else {
+        player.currentTime += 10;
+      }
+    });
+
+    document.getElementById("rewind").addEventListener("click", () => {
+      if (!player.src) return;
+      
+      if (isStreaming) {
+        // For streaming, we need to seek using our custom handler
+        player.currentTime = Math.max(0, player.currentTime - 10);
+      } else {
+        player.currentTime -= 10;
+      }
+    });
+
+    // Check connection to server continuously
+    let serverCheckInterval;
+    
+    function startServerHealthCheck() {
+      if (isStreaming) {
+        serverCheckInterval = setInterval(() => {
+          fetch('/static/styles.css', { method: 'HEAD' })
+            .then(response => {
+              if (response.ok && isStreaming) {
+                // Server is reachable
+                const qualityIndicator = document.getElementById("streamQualityIndicator");
+                if (qualityIndicator.style.width !== "100%") {
+                  qualityIndicator.style.width = "100%";
+                }
+              }
+            })
+            .catch(error => {
+              // Server might be unreachable
+              if (isStreaming) {
+                logDebug("Server connection issues", "error");
+                updateStreamHealth("error", 20);
+              }
+            });
+        }, 5000);
+      } else if (serverCheckInterval) {
+        clearInterval(serverCheckInterval);
+      }
+    }
+    
+    // Add event listeners for connection status
+    window.addEventListener("online", () => {
+      if (isStreaming) {
+        logDebug("Network connection restored", "success");
+        updateStreamHealth("starting", 50);
+        retryStream();
+      }
+    });
+    
+    window.addEventListener("offline", () => {
+      if (isStreaming) {
+        logDebug("Network connection lost", "error");
+        updateStreamHealth("error", 0);
+      }
+    });
+    
+    // Check for errors that might be caused by FFmpeg issues
+    let checkStreamErrorTimeout;
+    
+    player.addEventListener('progress', () => {
+      if (isStreaming) {
+        // Clear any existing timeout
+        if (checkStreamErrorTimeout) {
+          clearTimeout(checkStreamErrorTimeout);
+        }
+        
+        // Set a new timeout to check if the stream has stalled
+        checkStreamErrorTimeout = setTimeout(() => {
+          // If we haven't received any data for a while
+          if (player.readyState < 3 && isStreaming) {
+            logDebug("Stream possibly stalled", "warning");
+            updateStreamHealth("buffering", 30);
+          }
+        }, 8000);
+      }
+    });
+    
+    // Monitor stream quality
+    player.addEventListener('progress', () => {
+      if (isStreaming && player.buffered.length > 0) {
+        const bufferedEnd = player.buffered.end(player.buffered.length - 1);
+        const duration = player.duration;
+        
+        if (isFinite(duration) && duration > 0) {
+          const bufferedPercent = (bufferedEnd / duration) * 100;
+          streamQualityIndicator.style.width = `${Math.min(bufferedPercent, 100)}%`;
+        }
+      }
+    });
+
+    // Start server health check when streaming
+    player.addEventListener('play', () => {
+      if (isStreaming) {
+        startServerHealthCheck();
+      }
+    });
+  </script>
+</body>
+</html>
